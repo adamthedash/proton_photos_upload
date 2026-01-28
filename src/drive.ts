@@ -10,11 +10,19 @@
  * - Automatic MIME type detection
  * - Thumbnail generation (512x512, JPEG)
  * - File type validation
+ * - Parallel uploads with configurable concurrency
  *
  * Usage:
  *   export PROTON_USERNAME="your-email@proton.me"
  *   export PROTON_PASSWORD="your-password"
+ *   bun run src/drive.ts [folder-path] [--parallel N]
+ *
+ * Examples:
  *   bun run src/drive.ts
+ *   bun run src/drive.ts --parallel 5
+ *   bun run src/drive.ts -p 3
+ *   bun run src/drive.ts /path/to/photos --parallel 4
+ *   bun run src/drive.ts -f=/path/to/photos -p=2
  */
 
 import { ProtonDrivePhotosClient } from "@protontech/drive-sdk/dist/protonDrivePhotosClient.js";
@@ -343,6 +351,7 @@ async function uploadPhotoFolder(
   options?: {
     skipDuplicates?: boolean;
     onProgress?: (current: number, total: number, fileName: string) => void;
+    parallelism?: number;
   }
 ) {
   logger.info(`Scanning folder: ${folderPath}`);
@@ -363,6 +372,9 @@ async function uploadPhotoFolder(
   
   logger.info(`Found ${mediaFiles.length} media file(s) to upload`);
   
+  // Determine parallelism level (default to 1 for sequential processing)
+  const parallelism = Math.max(1, options?.parallelism || 1);
+  
   const results = {
     total: mediaFiles.length,
     uploaded: 0,
@@ -375,53 +387,74 @@ async function uploadPhotoFolder(
       nodeUid?: string;
     }>,
   };
+
+  // Process files in batches for parallel uploads
+  logger.info(`Starting upload with ${parallelism} parallel worker(s)`);
   
-  // Upload each file
-  for (let i = 0; i < mediaFiles.length; i++) {
-    const filePath = mediaFiles[i];
-    const fileName = filePath.split("/").pop() || filePath;
+  for (let i = 0; i < mediaFiles.length; i += parallelism) {
+    const batch = mediaFiles.slice(i, i + parallelism);
+    const batchStart = i + 1;
+    const batchEnd = Math.min(i + parallelism, mediaFiles.length);
     
-    logger.info(`[${i + 1}/${mediaFiles.length}] Processing: ${fileName}`);
+    logger.info(`Processing batch ${Math.ceil(batchStart / parallelism)}/${Math.ceil(mediaFiles.length / parallelism)} (files ${batchStart}-${batchEnd})`);
     
-    if (options?.onProgress) {
-      options.onProgress(i + 1, mediaFiles.length, fileName);
-    }
-    
-    try {
-      // Check for duplicates if requested
-      if (options?.skipDuplicates) {
-        const fileBuffer = readFileSync(filePath);
-        const isDupe = await checkDuplicate(fileName, fileBuffer);
-        
-        if (isDupe) {
-          logger.info(`⊘ Skipping duplicate: ${fileName}`);
-          results.skipped++;
-          results.results.push({
-            filePath,
-            status: "skipped",
-          });
-          continue;
-        }
+    // Process all files in the current batch concurrently
+    const batchPromises = batch.map(async (filePath, batchIndex) => {
+      const fileName = filePath.split("/").pop() || filePath;
+      const globalIndex = i + batchIndex;
+      
+      logger.info(`[${globalIndex + 1}/${mediaFiles.length}] Processing: ${fileName}`);
+      
+      if (options?.onProgress) {
+        options.onProgress(globalIndex + 1, mediaFiles.length, fileName);
       }
       
-      // Upload the file
-      const result = await uploadPhoto(filePath);
-      results.uploaded++;
-      results.results.push({
-        filePath,
-        status: "uploaded",
-        nodeUid: result.nodeUid,
-      });
-      
-    } catch (error) {
-      logger.error(`Failed to upload ${fileName}:`, (error as Error).message);
-      results.failed++;
-      results.results.push({
-        filePath,
-        status: "failed",
-        error: (error as Error).message,
-      });
-    }
+      try {
+        // Check for duplicates if requested
+        if (options?.skipDuplicates) {
+          const fileBuffer = readFileSync(filePath);
+          const isDupe = await checkDuplicate(fileName, fileBuffer);
+          
+          if (isDupe) {
+            logger.info(`⊘ Skipping duplicate: ${fileName}`);
+            return {
+              filePath,
+              status: "skipped" as const,
+            };
+          }
+        }
+        
+        // Upload the file
+        const result = await uploadPhoto(filePath);
+        logger.info(`✓ Uploaded: ${fileName}`);
+        return {
+          filePath,
+          status: "uploaded" as const,
+          nodeUid: result.nodeUid,
+        };
+        
+      } catch (error) {
+        logger.error(`✗ Failed to upload ${fileName}:`, (error as Error).message);
+        return {
+          filePath,
+          status: "failed" as const,
+          error: (error as Error).message,
+        };
+      }
+    });
+    
+    // Wait for all files in the current batch to complete
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Update overall results
+    batchResults.forEach(result => {
+      results.results.push(result);
+      if (result.status === "uploaded") results.uploaded++;
+      else if (result.status === "skipped") results.skipped++;
+      else if (result.status === "failed") results.failed++;
+    });
+    
+    logger.info(`Completed batch ${Math.ceil(batchStart / parallelism)}/${Math.ceil(mediaFiles.length / parallelism)}`);
   }
   
   // Print summary
@@ -463,18 +496,94 @@ async function uploadPhotoFolder(
 // STEP 6: Main function to run the example
 // ============================================================================
 
+function parseCommandLineArgs() {
+  const args = process.argv.slice(2);
+  let folderPath: string | null = null;
+  let parallelism = 1;
+  let showHelp = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    
+    if (arg === "--help" || arg === "-h") {
+      showHelp = true;
+      break;
+    } else if (arg === "--parallel" || arg === "-p") {
+      const value = args[i + 1];
+      if (value && !isNaN(parseInt(value))) {
+        parallelism = Math.max(1, parseInt(value));
+        i++; // Skip next argument
+      } else {
+        logger.warn(`Invalid parallelism value: ${value}. Using default (1).`);
+      }
+    } else if (arg.startsWith("--parallel=") || arg.startsWith("-p=")) {
+      const value = arg.split("=")[1];
+      if (!isNaN(parseInt(value))) {
+        parallelism = Math.max(1, parseInt(value));
+      } else {
+        logger.warn(`Invalid parallelism value: ${value}. Using default (1).`);
+      }
+    } else if (arg.startsWith("--folder=")) {
+      folderPath = arg.split("=")[1];
+    } else if (arg.startsWith("-f=")) {
+      folderPath = arg.split("=")[1];
+    } else if (!arg.startsWith("--") && !arg.startsWith("-")) {
+      // Positional argument - folder path
+      if (folderPath === null) {
+        folderPath = arg;
+      } else {
+        logger.warn(`Unexpected argument: ${arg}. Ignoring.`);
+      }
+    }
+  }
+
+  if (showHelp) {
+    console.log(`
+Usage: bun run src/drive.ts <folder-path> [options]
+
+Options:
+  --parallel, -p N    Upload N files in parallel (default: 1)
+  --folder, -f PATH  Specify folder path to upload (alternative to positional arg)
+  --help, -h         Show this help message
+
+Examples:
+  bun run src/drive.ts /path/to/photos
+  bun run src/drive.ts /path/to/photos --parallel 5
+  bun run src/drive.ts /path/to/photos -p 3
+  bun run src/drive.ts -f=/path/to/photos --parallel 4
+  bun run src/drive.ts -f=/path/to/photos -p=2
+`);
+    process.exit(0);
+  }
+
+  // Validate that folder path is provided
+  if (folderPath === null) {
+    console.error("Error: Folder path is required.");
+    console.log(`
+Usage: bun run src/drive.ts <folder-path> [options]
+Use --help for more information.
+`);
+    process.exit(1);
+  }
+
+  return { folderPath, parallelism };
+}
+
 async function main() {
   try {
+    // Parse command line arguments
+    const { folderPath, parallelism } = parseCommandLineArgs();
+    
+    logger.info(`Using parallelism: ${parallelism}`);
+    logger.info(`Target folder: ${folderPath}`);
+
     // Initialize the photos client
     await getPhotosClient();
     logger.info("Photos client initialized successfully!");
 
-    // Example: List photos
-    // await listPhotos();
+    // Upload the folder
+    await uploadPhotoFolder(folderPath, { parallelism });
 
-    // Example: Upload a photo
-    // await uploadPhoto("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2003/DCA05_(9) (1).jpg");
-    await uploadPhotoFolder("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2020");
   } catch (error) {
     logger.error("Error:", (error as Error).message);
     process.exit(1);
