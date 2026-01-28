@@ -29,7 +29,7 @@ import { ProtonDrivePhotosClient } from "@protontech/drive-sdk/dist/protonDriveP
 import { Telemetry, LogFilter, LogLevel } from "@protontech/drive-sdk/dist/telemetry.js";
 
 import { MemoryCache} from "@protontech/drive-sdk";
-import { readFileSync, existsSync, readdirSync, statSync } from "fs";
+import { readFileSync, existsSync, readdirSync, statSync, appendFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
   ProtonAuth,
@@ -253,6 +253,36 @@ async function uploadPhotoFromStream(
 }
 
 // ============================================================================
+// STEP 4.5: File logging helper functions
+// ============================================================================
+
+/**
+ * Write file paths to log files
+ */
+function writeFilePathsToLog(filePaths: string[], logFile: string) {
+  try {
+    // Append to file, create if doesn't exist
+    const content = filePaths.join('\n') + '\n';
+    appendFileSync(logFile, content);
+  } catch (error) {
+    logger.error(`Failed to write to ${logFile}:`, (error as Error).message);
+  }
+}
+
+/**
+ * Clear log files at the start
+ */
+function clearLogFiles() {
+  try {
+    writeFileSync('./success.txt', '', { flag: 'w' });
+    writeFileSync('./errors.txt', '', { flag: 'w' });
+    writeFileSync('./skipped.txt', '', { flag: 'w' });
+  } catch (error) {
+    logger.warn(`Failed to clear log files:`, (error as Error).message);
+  }
+}
+
+// ============================================================================
 // STEP 5: Additional helper functions
 // ============================================================================
 
@@ -371,7 +401,10 @@ async function uploadPhotoFolder(
   }
   
   logger.info(`Found ${mediaFiles.length} media file(s) to upload`);
-  
+
+  // Clear log files at the start
+  clearLogFiles();
+
   // Determine parallelism level (default to 1 for sequential processing)
   const parallelism = Math.max(1, options?.parallelism || 1);
   
@@ -453,6 +486,31 @@ async function uploadPhotoFolder(
       else if (result.status === "skipped") results.skipped++;
       else if (result.status === "failed") results.failed++;
     });
+    
+    // Write logs for this batch
+    const successfulPaths = batchResults
+      .filter(result => result.status === "uploaded")
+      .map(result => result.filePath);
+    
+    const failedPaths = batchResults
+      .filter(result => result.status === "failed")
+      .map(result => result.filePath);
+    
+    const skippedPaths = batchResults
+      .filter(result => result.status === "skipped")
+      .map(result => result.filePath);
+    
+    if (successfulPaths.length > 0) {
+      writeFilePathsToLog(successfulPaths, './success.txt');
+    }
+    
+    if (failedPaths.length > 0) {
+      writeFilePathsToLog(failedPaths, './errors.txt');
+    }
+    
+    if (skippedPaths.length > 0) {
+      writeFilePathsToLog(skippedPaths, './skipped.txt');
+    }
     
     logger.info(`Completed batch ${Math.ceil(batchStart / parallelism)}/${Math.ceil(mediaFiles.length / parallelism)}`);
   }
