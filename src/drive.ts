@@ -21,7 +21,8 @@ import { ProtonDrivePhotosClient } from "@protontech/drive-sdk/dist/protonDriveP
 import { Telemetry, LogFilter, LogLevel } from "@protontech/drive-sdk/dist/telemetry.js";
 
 import { MemoryCache} from "@protontech/drive-sdk";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
+import { join } from "path";
 import {
   ProtonAuth,
   createProtonHttpClient,
@@ -33,6 +34,7 @@ import {
 import { validateAndGetMimeType } from "./utils/validation.js";
 import { generateThumbnail, thumbnailToUploadFormat } from "./utils/thumbnail.js";
 import { Thumbnail } from "./types/thumbnail.js";
+import { isSupportedExtension, getFileExtension } from "./utils/mime.js";
 
 // ============================================================================
 // STEP 1: Authenticate and set up dependencies
@@ -303,6 +305,157 @@ async function listPhotos() {
 }
 
 // ============================================================================
+// STEP 6: Recursive folder upload
+// ============================================================================
+
+/**
+ * Recursively finds all image and video files in a folder
+ */
+function findMediaFiles(folderPath: string): string[] {
+  const mediaFiles: string[] = [];
+  
+  if (!existsSync(folderPath)) {
+    throw new Error(`Folder not found: ${folderPath}`);
+  }
+  
+  const stats = statSync(folderPath);
+  if (!stats.isDirectory()) {
+    throw new Error(`Path is not a directory: ${folderPath}`);
+  }
+  
+  function scanDirectory(dirPath: string) {
+    const entries = readdirSync(dirPath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = join(dirPath, entry.name);
+      
+      if (entry.isDirectory()) {
+        // Recursively scan subdirectories
+        scanDirectory(fullPath);
+      } else if (entry.isFile()) {
+        // Check if file has a supported extension
+        const extension = getFileExtension(entry.name);
+        if (extension && isSupportedExtension(extension)) {
+          mediaFiles.push(fullPath);
+        }
+      }
+    }
+  }
+  
+  scanDirectory(folderPath);
+  return mediaFiles;
+}
+
+/**
+ * Recursively uploads all image and video files from a folder
+ * @param folderPath - Path to the folder to search
+ * @param options - Upload options
+ * @returns Summary of upload results
+ */
+async function uploadPhotoFolder(
+  folderPath: string,
+  options?: {
+    skipDuplicates?: boolean;
+    onProgress?: (current: number, total: number, fileName: string) => void;
+  }
+) {
+  console.log(`\nScanning folder: ${folderPath}`);
+  console.log("Looking for image and video files...\n");
+  
+  // Find all media files
+  const mediaFiles = findMediaFiles(folderPath);
+  
+  if (mediaFiles.length === 0) {
+    console.log("No image or video files found.");
+    return {
+      total: 0,
+      uploaded: 0,
+      skipped: 0,
+      failed: 0,
+      results: [],
+    };
+  }
+  
+  console.log(`Found ${mediaFiles.length} media file(s) to upload\n`);
+  
+  const results = {
+    total: mediaFiles.length,
+    uploaded: 0,
+    skipped: 0,
+    failed: 0,
+    results: [] as Array<{
+      filePath: string;
+      status: "uploaded" | "skipped" | "failed";
+      error?: string;
+      nodeUid?: string;
+    }>,
+  };
+  
+  // Upload each file
+  for (let i = 0; i < mediaFiles.length; i++) {
+    const filePath = mediaFiles[i];
+    const fileName = filePath.split("/").pop() || filePath;
+    
+    console.log(`\n[${i + 1}/${mediaFiles.length}] Processing: ${fileName}`);
+    console.log("─".repeat(60));
+    
+    if (options?.onProgress) {
+      options.onProgress(i + 1, mediaFiles.length, fileName);
+    }
+    
+    try {
+      // Check for duplicates if requested
+      if (options?.skipDuplicates) {
+        const fileBuffer = readFileSync(filePath);
+        const isDupe = await checkDuplicate(fileName, fileBuffer);
+        
+        if (isDupe) {
+          console.log(`⊘ Skipping (duplicate): ${fileName}`);
+          results.skipped++;
+          results.results.push({
+            filePath,
+            status: "skipped",
+          });
+          continue;
+        }
+      }
+      
+      // Upload the file
+      const result = await uploadPhoto(filePath);
+      results.uploaded++;
+      results.results.push({
+        filePath,
+        status: "uploaded",
+        nodeUid: result.nodeUid,
+      });
+      
+      console.log(`✓ Successfully uploaded: ${fileName}`);
+      
+    } catch (error) {
+      console.error(`✗ Failed to upload ${fileName}:`, (error as Error).message);
+      results.failed++;
+      results.results.push({
+        filePath,
+        status: "failed",
+        error: (error as Error).message,
+      });
+    }
+  }
+  
+  // Print summary
+  console.log("\n" + "═".repeat(60));
+  console.log("UPLOAD SUMMARY");
+  console.log("═".repeat(60));
+  console.log(`Total files found:     ${results.total}`);
+  console.log(`Successfully uploaded: ${results.uploaded}`);
+  console.log(`Skipped (duplicates):  ${results.skipped}`);
+  console.log(`Failed:                ${results.failed}`);
+  console.log("═".repeat(60) + "\n");
+  
+  return results;
+}
+
+// ============================================================================
 // Usage Examples
 // ============================================================================
 
@@ -360,4 +513,5 @@ export {
   checkDuplicate,
   getPhotosFolder,
   listPhotos,
+  uploadPhotoFolder,
 };
