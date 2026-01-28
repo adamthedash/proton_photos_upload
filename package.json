@@ -1,5 +1,13 @@
 {
+  "name": "proton-drive-upload",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts"
+  },
   "dependencies": {
-    "@protontech/drive-sdk": "^0.9.4"
+    "@protontech/drive-sdk": "^0.9.4",
+    "bcryptjs": "^3.0.3",
+    "openpgp": "^6.3.0"
   }
 }

@@ -1,0 +1,20 @@
+/**
+ * Simple logger for Proton Drive
+ */
+
+export const logger = {
+  info: (message: string, ...args: unknown[]) => {
+    console.log(message, ...args);
+  },
+  warn: (message: string, ...args: unknown[]) => {
+    console.warn(message, ...args);
+  },
+  error: (message: string, ...args: unknown[]) => {
+    console.error(message, ...args);
+  },
+  debug: (message: string, ...args: unknown[]) => {
+    if (process.env.DEBUG) {
+      console.log('[DEBUG]', message, ...args);
+    }
+  },
+};
