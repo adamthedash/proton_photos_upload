@@ -21,7 +21,7 @@ import { ProtonDrivePhotosClient } from "@protontech/drive-sdk/dist/protonDriveP
 import { Telemetry, LogFilter, LogLevel } from "@protontech/drive-sdk/dist/telemetry.js";
 
 import { MemoryCache} from "@protontech/drive-sdk";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import {
   ProtonAuth,
   createProtonHttpClient,
@@ -119,6 +119,40 @@ async function uploadPhoto(filePath: string) {
     const fileSize = fileBuffer.length;
     console.log(`File size: ${fileSize} bytes`);
 
+    // Check for supplemental metadata file
+    const metadataPath = `${filePath}.supplemental-metadata.json`;
+    let captureTime: Date | undefined;
+    let modificationTime: Date | undefined;
+    
+    if (existsSync(metadataPath)) {
+      try {
+        console.log("Reading supplemental metadata...");
+        const metadataContent = readFileSync(metadataPath, "utf-8");
+        const metadata = JSON.parse(metadataContent);
+        
+        if (metadata.photoTakenTime?.timestamp) {
+          captureTime = new Date(parseInt(metadata.photoTakenTime.timestamp) * 1000);
+          console.log(`✓ Capture time: ${captureTime.toISOString()}`);
+        }
+        
+        if (metadata.creationTime?.timestamp) {
+          modificationTime = new Date(parseInt(metadata.creationTime.timestamp) * 1000);
+          console.log(`✓ Modification time: ${modificationTime.toISOString()}`);
+        }
+      } catch (metadataError) {
+        console.warn("⚠ Failed to read supplemental metadata:", (metadataError as Error).message);
+        console.warn("Using current time for timestamps...");
+      }
+    }
+    
+    // Fall back to current time if metadata not found
+    if (!captureTime) {
+      captureTime = new Date();
+    }
+    if (!modificationTime) {
+      modificationTime = new Date();
+    }
+
     // Generate thumbnail
     console.log("\nGenerating thumbnail...");
     let thumbnail: Thumbnail | null = null;
@@ -146,8 +180,8 @@ async function uploadPhoto(filePath: string) {
     const uploader = await client.getFileUploader(fileName, {
       mediaType: mimeType,
       expectedSize: fileSize,
-      // modificationTime: new Date(),
-      // captureTime: new Date(), // When the photo was taken
+      modificationTime,
+      captureTime,
       tags: [], // Optional: photo tags (0-9)
     });
 
@@ -307,7 +341,7 @@ async function main() {
     // await listPhotos();
 
     // Example: Upload a photo
-    await uploadPhoto("/home/adam/Downloads/image-removebg-preview.png");
+    await uploadPhoto("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2003/DCA05_(9) (1).jpg");
   } catch (error) {
     console.error("Error:", (error as Error).message);
     process.exit(1);
