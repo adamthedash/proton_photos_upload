@@ -29,15 +29,15 @@ async function generateImageThumbnail(
   filePath: string,
   config: typeof THUMBNAIL_CONFIGS.DEFAULT,
 ): Promise<ThumbnailResult> {
-  console.log(
-    `Generating image thumbnail (max: ${config.maxWidth}x${config.maxHeight}, ${config.maxSizeBytes} bytes)...`,
-  );
+  // console.log(
+  //   `Generating image thumbnail (max: ${config.maxWidth}x${config.maxHeight}, ${config.maxSizeBytes} bytes)...`,
+  // );
 
   // Get image metadata
   const metadata = await sharp(filePath).metadata();
-  console.log(
-    `Original image: ${metadata.width}x${metadata.height}, format: ${metadata.format}`,
-  );
+  // console.log(
+  //   `Original image: ${metadata.width}x${metadata.height}, format: ${metadata.format}`,
+  // );
 
   // Resize image to fit within max dimensions (maintaining aspect ratio)
   let resizedImage = sharp(filePath).resize(config.maxWidth, config.maxHeight, {
@@ -58,9 +58,9 @@ async function generateImageThumbnail(
       // Get final dimensions
       const finalMetadata = await sharp(buffer).metadata();
 
-      console.log(
-        `✓ Thumbnail generated: ${finalMetadata.width}x${finalMetadata.height}, ${buffer.length} bytes (quality: ${quality})`,
-      );
+      // console.log(
+      //   `✓ Thumbnail generated: ${finalMetadata.width}x${finalMetadata.height}, ${buffer.length} bytes (quality: ${quality})`,
+      // );
 
       return {
         data: new Uint8Array(buffer),
@@ -85,9 +85,9 @@ async function generateVideoThumbnail(
   config: typeof THUMBNAIL_CONFIGS.DEFAULT,
   captureTimeSeconds: number = 1,
 ): Promise<ThumbnailResult> {
-  console.log(
-    `Generating video thumbnail at ${captureTimeSeconds}s (max: ${config.maxWidth}x${config.maxHeight}, ${config.maxSizeBytes} bytes)...`,
-  );
+  // console.log(
+  //   `Generating video thumbnail at ${captureTimeSeconds}s (max: ${config.maxWidth}x${config.maxHeight}, ${config.maxSizeBytes} bytes)...`,
+  // );
 
   // Create temporary file for the extracted frame
   const tempFile = join(tmpdir(), `video_thumbnail_${Date.now()}.jpg`);
@@ -107,18 +107,18 @@ async function generateVideoThumbnail(
 
           // Get frame metadata
           const metadata = await sharp(frameBuffer).metadata();
-          console.log(
-            `Extracted frame: ${metadata.width}x${metadata.height}, ${frameBuffer.length} bytes`,
-          );
+          // console.log(
+          //   `Extracted frame: ${metadata.width}x${metadata.height}, ${frameBuffer.length} bytes`,
+          // );
 
           // Account for encryption overhead (90% of max size)
           const targetMaxSize = Math.floor(config.maxSizeBytes * 0.9);
 
           // If frame is already small enough, use it
           if (frameBuffer.length <= targetMaxSize) {
-            console.log(
-              `✓ Video thumbnail generated: ${metadata.width}x${metadata.height}, ${frameBuffer.length} bytes`,
-            );
+            // console.log(
+            //   `✓ Video thumbnail generated: ${metadata.width}x${metadata.height}, ${frameBuffer.length} bytes`,
+            // );
 
             const result = {
               data: new Uint8Array(frameBuffer),
@@ -143,9 +143,9 @@ async function generateVideoThumbnail(
             if (compressedBuffer.length <= targetMaxSize) {
               const finalMetadata = await sharp(compressedBuffer).metadata();
 
-              console.log(
-                `✓ Video thumbnail generated: ${finalMetadata.width}x${finalMetadata.height}, ${compressedBuffer.length} bytes (quality: ${quality})`,
-              );
+              // console.log(
+              //   `✓ Video thumbnail generated: ${finalMetadata.width}x${finalMetadata.height}, ${compressedBuffer.length} bytes (quality: ${quality})`,
+              // );
 
               const result = {
                 data: new Uint8Array(compressedBuffer),

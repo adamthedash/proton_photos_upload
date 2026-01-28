@@ -82,7 +82,7 @@ async function initializePhotosClient() {
     // @ts-expect-error - PrivateKey types differ between openpgp imports
     openPGPCryptoModule: createOpenPGPCrypto(),
     srpModule: createSrpModule(),
-    telemetry: new Telemetry({logFilter: new LogFilter({ level: LogLevel.DEBUG })})
+    telemetry: new Telemetry({logHandlers: [], metricHandlers: []})
   });
 
   return photosClient;
@@ -108,7 +108,7 @@ async function getPhotosClient() {
 async function uploadPhoto(filePath: string) {
   const client = await getPhotosClient();
   try {
-    logger.info(`Starting photo upload: ${filePath}`);
+    logger.debug(`Starting photo upload: ${filePath}`);
 
     // Validate file and get MIME type
     const mimeType = validateAndGetMimeType(filePath);
@@ -197,7 +197,7 @@ async function uploadPhoto(filePath: string) {
     // Wait for upload to complete
     const result = await controller.completion();
 
-    logger.info(`✓ Upload complete! Node: ${result.nodeUid}`);
+    // logger.info(`✓ Upload complete! Node: ${result.nodeUid}`);
 
     return result;
   } catch (error) {
@@ -217,7 +217,7 @@ async function uploadPhotoFromStream(
 ) {
   const client = await getPhotosClient();
   try {
-    logger.info(`Starting stream upload: ${fileName}`);
+    // logger.info(`Starting stream upload: ${fileName}`);
 
     const uploader = await client.getFileUploader(fileName, {
       mediaType: "image/jpeg",
@@ -473,8 +473,8 @@ async function main() {
     // await listPhotos();
 
     // Example: Upload a photo
-    await uploadPhoto("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2003/DCA05_(9) (1).jpg");
-    // await uploadPhotoFolder("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2020");
+    // await uploadPhoto("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2003/DCA05_(9) (1).jpg");
+    await uploadPhotoFolder("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2020");
   } catch (error) {
     logger.error("Error:", (error as Error).message);
     process.exit(1);
