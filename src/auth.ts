@@ -818,7 +818,6 @@ async function apiRequest<T extends ApiResponse>(
   if (data) {
     options.body = JSON.stringify(data);
   }
-  console.log(url, options);
 
   const response = await fetch(url, options);
   const json = (await response.json()) as T;

@@ -35,6 +35,7 @@ import { validateAndGetMimeType } from "./utils/validation.js";
 import { generateThumbnail, thumbnailToUploadFormat } from "./utils/thumbnail.js";
 import { Thumbnail } from "./types/thumbnail.js";
 import { isSupportedExtension, getFileExtension } from "./utils/mime.js";
+import { logger } from "./logger.js";
 
 // ============================================================================
 // STEP 1: Authenticate and set up dependencies
@@ -51,10 +52,10 @@ async function initializePhotosClient() {
     );
   }
 
-  console.log("Initializing crypto...");
+  logger.info("Initializing crypto...");
   await initCrypto();
 
-  console.log("Authenticating with Proton...");
+  logger.info("Authenticating with Proton...");
   const auth = new ProtonAuth();
   await auth.login(username, password);
 
@@ -63,12 +64,12 @@ async function initializePhotosClient() {
     throw new Error("Login failed: no session returned");
   }
 
-  console.log("✓ Authenticated successfully\n");
+  logger.info("✓ Authenticated successfully");
 
   // Create token refresh callback
   const onTokenRefresh = async () => {
     await auth.refreshToken();
-    console.log("Token refreshed");
+    logger.debug("Token refreshed");
   };
 
   // Create the photos client with concrete implementations
@@ -107,19 +108,17 @@ async function getPhotosClient() {
 async function uploadPhoto(filePath: string) {
   const client = await getPhotosClient();
   try {
-    console.log("Starting photo upload...");
-    console.log(`File: ${filePath}`);
+    logger.info(`Starting photo upload: ${filePath}`);
 
     // Validate file and get MIME type
-    console.log("Validating file and detecting MIME type...");
     const mimeType = validateAndGetMimeType(filePath);
-    console.log(`✓ File validated. MIME type: ${mimeType}`);
+    logger.debug(`File validated. MIME type: ${mimeType}`);
 
     // Read the file
     const fileBuffer = readFileSync(filePath);
     const fileName = filePath.split("/").pop();
     const fileSize = fileBuffer.length;
-    console.log(`File size: ${fileSize} bytes`);
+    logger.debug(`File size: ${fileSize} bytes`);
 
     // Check for supplemental metadata file
     const metadataPath = `${filePath}.supplemental-metadata.json`;
@@ -128,22 +127,21 @@ async function uploadPhoto(filePath: string) {
     
     if (existsSync(metadataPath)) {
       try {
-        console.log("Reading supplemental metadata...");
+        logger.debug("Reading supplemental metadata...");
         const metadataContent = readFileSync(metadataPath, "utf-8");
         const metadata = JSON.parse(metadataContent);
         
         if (metadata.photoTakenTime?.timestamp) {
           captureTime = new Date(parseInt(metadata.photoTakenTime.timestamp) * 1000);
-          console.log(`✓ Capture time: ${captureTime.toISOString()}`);
+          logger.debug(`Capture time: ${captureTime.toISOString()}`);
         }
         
         if (metadata.creationTime?.timestamp) {
           modificationTime = new Date(parseInt(metadata.creationTime.timestamp) * 1000);
-          console.log(`✓ Modification time: ${modificationTime.toISOString()}`);
+          logger.debug(`Modification time: ${modificationTime.toISOString()}`);
         }
       } catch (metadataError) {
-        console.warn("⚠ Failed to read supplemental metadata:", (metadataError as Error).message);
-        console.warn("Using current time for timestamps...");
+        logger.warn("Failed to read supplemental metadata:", (metadataError as Error).message);
       }
     }
     
@@ -156,7 +154,7 @@ async function uploadPhoto(filePath: string) {
     }
 
     // Generate thumbnail
-    console.log("\nGenerating thumbnail...");
+    logger.debug("Generating thumbnail...");
     let thumbnail: Thumbnail | null = null;
     try {
       const thumbnailResult = await generateThumbnail(
@@ -167,10 +165,9 @@ async function uploadPhoto(filePath: string) {
       );
       
       thumbnail = thumbnailToUploadFormat(thumbnailResult);
-      console.log(`✓ Thumbnail generated successfully (${thumbnailResult.sizeBytes} bytes, ${thumbnailResult.width}x${thumbnailResult.height})`);
+      logger.debug(`Thumbnail generated (${thumbnailResult.sizeBytes} bytes, ${thumbnailResult.width}x${thumbnailResult.height})`);
     } catch (thumbnailError) {
-      console.warn("⚠ Thumbnail generation failed:", (thumbnailError as Error).message);
-      console.warn("Continuing upload without thumbnail...");
+      logger.warn("Thumbnail generation failed, continuing without thumbnail:", (thumbnailError as Error).message);
     }
 
     // Create a File-like object (for Node.js)
@@ -178,7 +175,6 @@ async function uploadPhoto(filePath: string) {
     Object.defineProperty(file, "name", { value: fileName });
 
     // Get file uploader with metadata
-    console.log("\nCreating file uploader...");
     const uploader = await client.getFileUploader(fileName, {
       mediaType: mimeType,
       expectedSize: fileSize,
@@ -187,8 +183,6 @@ async function uploadPhoto(filePath: string) {
       tags: [], // Optional: photo tags (0-9)
     });
 
-    console.log("✓ Uploader created, starting upload...");
-
     // Upload the file with progress callback and thumbnail
     const thumbnails = thumbnail ? [thumbnail] : [];
     const controller = await uploader.uploadFromFile(
@@ -196,26 +190,18 @@ async function uploadPhoto(filePath: string) {
       thumbnails,
       (uploadedBytes) => {
         const progress = ((uploadedBytes / fileSize) * 100).toFixed(2);
-        console.log(
-          `Progress: ${uploadedBytes}/${fileSize} bytes (${progress}%)`,
-        );
+        logger.debug(`Upload progress: ${progress}%`);
       },
     );
 
     // Wait for upload to complete
-    console.log("Waiting for upload to complete...");
     const result = await controller.completion();
 
-    console.log("\n✓ Upload complete!");
-    console.log("Node UID:", result.nodeUid);
-    console.log("Revision UID:", result.nodeRevisionUid);
-    if (thumbnail) {
-      console.log("Thumbnail: included");
-    }
+    logger.info(`✓ Upload complete! Node: ${result.nodeUid}`);
 
     return result;
   } catch (error) {
-    console.error("\n✗ Upload failed:", error);
+    logger.error("Upload failed:", error);
     throw error;
   }
 }
@@ -231,7 +217,7 @@ async function uploadPhotoFromStream(
 ) {
   const client = await getPhotosClient();
   try {
-    console.log("Starting photo upload from stream...");
+    logger.info(`Starting stream upload: ${fileName}`);
 
     const uploader = await client.getFileUploader(fileName, {
       mediaType: "image/jpeg",
@@ -243,16 +229,17 @@ async function uploadPhotoFromStream(
       readableStream,
       [], // Thumbnails
       (uploadedBytes) => {
-        console.log(`Uploaded: ${uploadedBytes} bytes`);
+        const progress = ((uploadedBytes / fileSize) * 100).toFixed(2);
+        logger.debug(`Upload progress: ${progress}%`);
       },
     );
 
     const result = await controller.completion();
-    console.log("Upload complete! Node UID:", result.nodeUid);
+    logger.info(`✓ Upload complete! Node: ${result.nodeUid}`);
 
     return result;
   } catch (error) {
-    console.error("Upload failed:", error);
+    logger.error("Upload failed:", error);
     throw error;
   }
 }
@@ -282,7 +269,7 @@ async function checkDuplicate(fileName: string, fileBuffer: Buffer) {
 async function getPhotosFolder() {
   const client = await getPhotosClient();
   const rootFolder = await client.getMyPhotosRootFolder();
-  console.log("Photos folder:", rootFolder);
+  logger.debug("Photos folder:", rootFolder);
   return rootFolder;
 }
 
@@ -291,13 +278,12 @@ async function getPhotosFolder() {
  */
 async function listPhotos() {
   const client = await getPhotosClient();
-  console.log("Fetching photos from timeline...");
+  logger.info("Fetching photos from timeline...");
 
   const photos = [];
   for await (const photo of client.iterateTimeline()) {
     photos.push(photo);
-    console.log(photo);
-    console.log(`- (captured: ${photo.captureTime})`);
+    logger.info(`Photo: ${photo.name} (captured: ${photo.captureTime})`);
     break;
   }
 
@@ -359,14 +345,13 @@ async function uploadPhotoFolder(
     onProgress?: (current: number, total: number, fileName: string) => void;
   }
 ) {
-  console.log(`\nScanning folder: ${folderPath}`);
-  console.log("Looking for image and video files...\n");
+  logger.info(`Scanning folder: ${folderPath}`);
   
   // Find all media files
   const mediaFiles = findMediaFiles(folderPath);
   
   if (mediaFiles.length === 0) {
-    console.log("No image or video files found.");
+    logger.info("No image or video files found.");
     return {
       total: 0,
       uploaded: 0,
@@ -376,7 +361,7 @@ async function uploadPhotoFolder(
     };
   }
   
-  console.log(`Found ${mediaFiles.length} media file(s) to upload\n`);
+  logger.info(`Found ${mediaFiles.length} media file(s) to upload`);
   
   const results = {
     total: mediaFiles.length,
@@ -396,8 +381,7 @@ async function uploadPhotoFolder(
     const filePath = mediaFiles[i];
     const fileName = filePath.split("/").pop() || filePath;
     
-    console.log(`\n[${i + 1}/${mediaFiles.length}] Processing: ${fileName}`);
-    console.log("─".repeat(60));
+    logger.info(`[${i + 1}/${mediaFiles.length}] Processing: ${fileName}`);
     
     if (options?.onProgress) {
       options.onProgress(i + 1, mediaFiles.length, fileName);
@@ -410,7 +394,7 @@ async function uploadPhotoFolder(
         const isDupe = await checkDuplicate(fileName, fileBuffer);
         
         if (isDupe) {
-          console.log(`⊘ Skipping (duplicate): ${fileName}`);
+          logger.info(`⊘ Skipping duplicate: ${fileName}`);
           results.skipped++;
           results.results.push({
             filePath,
@@ -429,10 +413,8 @@ async function uploadPhotoFolder(
         nodeUid: result.nodeUid,
       });
       
-      console.log(`✓ Successfully uploaded: ${fileName}`);
-      
     } catch (error) {
-      console.error(`✗ Failed to upload ${fileName}:`, (error as Error).message);
+      logger.error(`Failed to upload ${fileName}:`, (error as Error).message);
       results.failed++;
       results.results.push({
         filePath,
@@ -443,14 +425,14 @@ async function uploadPhotoFolder(
   }
   
   // Print summary
-  console.log("\n" + "═".repeat(60));
-  console.log("UPLOAD SUMMARY");
-  console.log("═".repeat(60));
-  console.log(`Total files found:     ${results.total}`);
-  console.log(`Successfully uploaded: ${results.uploaded}`);
-  console.log(`Skipped (duplicates):  ${results.skipped}`);
-  console.log(`Failed:                ${results.failed}`);
-  console.log("═".repeat(60) + "\n");
+  logger.info("═".repeat(60));
+  logger.info("UPLOAD SUMMARY");
+  logger.info("═".repeat(60));
+  logger.info(`Total files found:     ${results.total}`);
+  logger.info(`Successfully uploaded: ${results.uploaded}`);
+  logger.info(`Skipped (duplicates):  ${results.skipped}`);
+  logger.info(`Failed:                ${results.failed}`);
+  logger.info("═".repeat(60));
   
   return results;
 }
@@ -485,18 +467,16 @@ async function main() {
   try {
     // Initialize the photos client
     await getPhotosClient();
-    console.log("Photos client initialized successfully!");
-    console.log(
-      "You can now use the exported functions to upload and manage photos.",
-    );
+    logger.info("Photos client initialized successfully!");
 
     // Example: List photos
     // await listPhotos();
 
     // Example: Upload a photo
     await uploadPhoto("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2003/DCA05_(9) (1).jpg");
+    // await uploadPhotoFolder("/home/adam/Downloads/takeout_3/Takeout/Google Photos/Photos from 2020");
   } catch (error) {
-    console.error("Error:", (error as Error).message);
+    logger.error("Error:", (error as Error).message);
     process.exit(1);
   }
 }
