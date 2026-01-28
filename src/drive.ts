@@ -32,6 +32,7 @@ import {
 } from "./auth.js";
 import { validateAndGetMimeType } from "./utils/validation.js";
 import { generateThumbnail, thumbnailToUploadFormat } from "./utils/thumbnail.js";
+import { Thumbnail } from "./types/thumbnail.js";
 
 // ============================================================================
 // STEP 1: Authenticate and set up dependencies
@@ -120,17 +121,17 @@ async function uploadPhoto(filePath: string) {
 
     // Generate thumbnail
     console.log("\nGenerating thumbnail...");
-    let thumbnailBlob: Blob | null = null;
+    let thumbnail: Thumbnail | null = null;
     try {
-      const thumbnail = await generateThumbnail(
+      const thumbnailResult = await generateThumbnail(
         filePath,
         mimeType,
         "DEFAULT", // Use DEFAULT thumbnail type (512x512, 64KB)
         1, // For videos, capture at 1 second
       );
       
-      thumbnailBlob = thumbnailToUploadFormat(thumbnail, fileName || "file");
-      console.log(`✓ Thumbnail generated successfully (${thumbnail.sizeBytes} bytes, ${thumbnail.width}x${thumbnail.height})`);
+      thumbnail = thumbnailToUploadFormat(thumbnailResult);
+      console.log(`✓ Thumbnail generated successfully (${thumbnailResult.sizeBytes} bytes, ${thumbnailResult.width}x${thumbnailResult.height})`);
     } catch (thumbnailError) {
       console.warn("⚠ Thumbnail generation failed:", (thumbnailError as Error).message);
       console.warn("Continuing upload without thumbnail...");
@@ -153,7 +154,7 @@ async function uploadPhoto(filePath: string) {
     console.log("✓ Uploader created, starting upload...");
 
     // Upload the file with progress callback and thumbnail
-    const thumbnails = thumbnailBlob ? [thumbnailBlob] : [];
+    const thumbnails = thumbnail ? [thumbnail] : [];
     const controller = await uploader.uploadFromFile(
       file,
       thumbnails,
@@ -172,7 +173,7 @@ async function uploadPhoto(filePath: string) {
     console.log("\n✓ Upload complete!");
     console.log("Node UID:", result.nodeUid);
     console.log("Revision UID:", result.nodeRevisionUid);
-    if (thumbnailBlob) {
+    if (thumbnail) {
       console.log("Thumbnail: included");
     }
 

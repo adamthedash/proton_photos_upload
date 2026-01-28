@@ -63,10 +63,11 @@ async function generateImageThumbnail(
       );
 
       return {
-        blob: new Blob([buffer], { type: "image/jpeg" }),
+        data: new Uint8Array(buffer),
         sizeBytes: buffer.length,
         width: finalMetadata.width || config.maxWidth,
         height: finalMetadata.height || config.maxHeight,
+        protonType: config.protonType,
       };
     }
   }
@@ -120,10 +121,11 @@ async function generateVideoThumbnail(
             );
 
             const result = {
-              blob: new Blob([frameBuffer], { type: "image/jpeg" }),
+              data: new Uint8Array(frameBuffer),
               sizeBytes: frameBuffer.length,
               width: metadata.width || config.maxWidth,
               height: metadata.height || config.maxHeight,
+              protonType: config.protonType,
             };
 
             // Clean up temp file
@@ -146,10 +148,11 @@ async function generateVideoThumbnail(
               );
 
               const result = {
-                blob: new Blob([compressedBuffer], { type: "image/jpeg" }),
+                data: new Uint8Array(compressedBuffer),
                 sizeBytes: compressedBuffer.length,
                 width: finalMetadata.width || config.maxWidth,
                 height: finalMetadata.height || config.maxHeight,
+                protonType: config.protonType,
               };
 
               // Clean up temp file
@@ -216,18 +219,13 @@ export async function generateThumbnail(
 }
 
 /**
- * Converts a ThumbnailResult blob to a format suitable for Proton Drive upload
+ * Converts a ThumbnailResult to the Proton SDK Thumbnail format
  */
 export function thumbnailToUploadFormat(
   thumbnail: ThumbnailResult,
-  originalFileName: string,
-): Blob {
-  // Create a File-like object for the thumbnail
-  const thumbnailFileName = `${originalFileName}_thumbnail.jpg`;
-  const blob = thumbnail.blob;
-  
-  // Add name property to the blob to make it File-like
-  Object.defineProperty(blob, "name", { value: thumbnailFileName });
-  
-  return blob;
+): { type: number; thumbnail: Uint8Array } {
+  return {
+    type: thumbnail.protonType,
+    thumbnail: thumbnail.data,
+  };
 }
