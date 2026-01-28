@@ -1,7 +1,15 @@
 /**
- * Minimal Example: Uploading Photos with ProtonDrivePhotosClient
+ * Minimal Example: Uploading Photos/Videos with ProtonDrivePhotosClient
  *
- * This example demonstrates how to upload photos using concrete implementations.
+ * This example demonstrates how to upload photos and videos with automatic
+ * thumbnail generation using concrete implementations.
+ *
+ * Supported file types: jpg, jpeg, png, mp4
+ * 
+ * Features:
+ * - Automatic MIME type detection
+ * - Thumbnail generation (512x512, JPEG)
+ * - File type validation
  *
  * Usage:
  *   export PROTON_USERNAME="your-email@proton.me"
@@ -10,7 +18,9 @@
  */
 
 import { ProtonDrivePhotosClient } from "@protontech/drive-sdk/dist/protonDrivePhotosClient.js";
-import { MemoryCache } from "@protontech/drive-sdk";
+import { Telemetry, LogFilter, LogLevel } from "@protontech/drive-sdk/dist/telemetry.js";
+
+import { MemoryCache} from "@protontech/drive-sdk";
 import { readFileSync } from "fs";
 import {
   ProtonAuth,
@@ -20,6 +30,8 @@ import {
   createOpenPGPCrypto,
   initCrypto,
 } from "./auth.js";
+import { validateAndGetMimeType } from "./utils/validation.js";
+import { generateThumbnail, thumbnailToUploadFormat } from "./utils/thumbnail.js";
 
 // ============================================================================
 // STEP 1: Authenticate and set up dependencies
@@ -66,6 +78,7 @@ async function initializePhotosClient() {
     // @ts-expect-error - PrivateKey types differ between openpgp imports
     openPGPCryptoModule: createOpenPGPCrypto(),
     srpModule: createSrpModule(),
+    telemetry: new Telemetry({logFilter: new LogFilter({ level: LogLevel.DEBUG })})
   });
 
   return photosClient;
@@ -92,31 +105,58 @@ async function uploadPhoto(filePath: string) {
   const client = await getPhotosClient();
   try {
     console.log("Starting photo upload...");
+    console.log(`File: ${filePath}`);
+
+    // Validate file and get MIME type
+    console.log("Validating file and detecting MIME type...");
+    const mimeType = validateAndGetMimeType(filePath);
+    console.log(`✓ File validated. MIME type: ${mimeType}`);
 
     // Read the file
     const fileBuffer = readFileSync(filePath);
     const fileName = filePath.split("/").pop();
     const fileSize = fileBuffer.length;
+    console.log(`File size: ${fileSize} bytes`);
+
+    // Generate thumbnail
+    console.log("\nGenerating thumbnail...");
+    let thumbnailBlob: Blob | null = null;
+    try {
+      const thumbnail = await generateThumbnail(
+        filePath,
+        mimeType,
+        "DEFAULT", // Use DEFAULT thumbnail type (512x512, 64KB)
+        1, // For videos, capture at 1 second
+      );
+      
+      thumbnailBlob = thumbnailToUploadFormat(thumbnail, fileName || "file");
+      console.log(`✓ Thumbnail generated successfully (${thumbnail.sizeBytes} bytes, ${thumbnail.width}x${thumbnail.height})`);
+    } catch (thumbnailError) {
+      console.warn("⚠ Thumbnail generation failed:", (thumbnailError as Error).message);
+      console.warn("Continuing upload without thumbnail...");
+    }
 
     // Create a File-like object (for Node.js)
-    const file = new Blob([fileBuffer], { type: "image/png" });
+    const file = new Blob([fileBuffer], { type: mimeType });
     Object.defineProperty(file, "name", { value: fileName });
 
     // Get file uploader with metadata
+    console.log("\nCreating file uploader...");
     const uploader = await client.getFileUploader(fileName, {
-      mediaType: "image/png",
+      mediaType: mimeType,
       expectedSize: fileSize,
       // modificationTime: new Date(),
       // captureTime: new Date(), // When the photo was taken
       tags: [], // Optional: photo tags (0-9)
     });
 
-    console.log("Uploader created, starting upload...");
+    console.log("✓ Uploader created, starting upload...");
 
-    // Upload the file with progress callback
+    // Upload the file with progress callback and thumbnail
+    const thumbnails = thumbnailBlob ? [thumbnailBlob] : [];
     const controller = await uploader.uploadFromFile(
       file,
-      [], // Thumbnails (empty array for now)
+      thumbnails,
       (uploadedBytes) => {
         const progress = ((uploadedBytes / fileSize) * 100).toFixed(2);
         console.log(
@@ -126,15 +166,19 @@ async function uploadPhoto(filePath: string) {
     );
 
     // Wait for upload to complete
+    console.log("Waiting for upload to complete...");
     const result = await controller.completion();
 
-    console.log("Upload complete!");
+    console.log("\n✓ Upload complete!");
     console.log("Node UID:", result.nodeUid);
     console.log("Revision UID:", result.nodeRevisionUid);
+    if (thumbnailBlob) {
+      console.log("Thumbnail: included");
+    }
 
     return result;
   } catch (error) {
-    console.error("Upload failed:", error);
+    console.error("\n✗ Upload failed:", error);
     throw error;
   }
 }
